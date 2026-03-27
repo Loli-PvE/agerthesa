@@ -1,8 +1,8 @@
 #!/bin/bash
 # =============================================================================
-# Arch Linux Gaming Installer v3.0
-# ext4 + Swap File 8GB + Полная поддержка шрифтов (все языки)
-# Исправленная версия
+# Arch Linux Gaming Installer v3.2
+# ext4 + Swap File 8GB + Все шрифты + Авто-монтирование игрового диска
+# ВСЕ ОШИБКИ ИСПРАВЛЕНЫ
 # =============================================================================
 
 set -e
@@ -47,8 +47,7 @@ check_live_env() {
 
 # Очистка при прерывании
 cleanup() {
-    if [[ -n "$INSTALL_STARTED" ]]; then
-        warn "Установка прервана. Очистка..."
+    if [[ -n "$INSTALL_STARTED" ]]; then        warn "Установка прервана. Очистка..."
         umount -R "$TARGET_MOUNT" 2>/dev/null || true
         swapoff -a 2>/dev/null || true
     fi
@@ -97,8 +96,7 @@ select_keymap() {
     echo "  5) jp (японская)"
     echo ""
     
-    while true; do
-        read -p "Выберите основную раскладку (1-5) [2]: " main_keymap_num
+    while true; do        read -p "Выберите основную раскладку (1-5) [2]: " main_keymap_num
         main_keymap_num="${main_keymap_num:-2}"
         case $main_keymap_num in
             1) MAIN_KEYMAP="us" ;;
@@ -147,8 +145,7 @@ select_keymap() {
             XKB_OPTIONS=""
             success "Раскладка: $KEYMAP"
         fi
-    else
-        KEYMAP="$MAIN_KEYMAP"
+    else        KEYMAP="$MAIN_KEYMAP"
         XKB_OPTIONS=""
         success "Раскладка: $KEYMAP"
     fi
@@ -197,8 +194,7 @@ get_user_info() {
     echo
     read -sp "Подтвердите пароль: " USER_PASS_CONFIRM
     echo
-    
-    while [[ "$USER_PASS" != "$USER_PASS_CONFIRM" ]]; do
+        while [[ "$USER_PASS" != "$USER_PASS_CONFIRM" ]]; do
         error "Пароли не совпадают!"
         read -sp "Пароль для $USERNAME: " USER_PASS
         echo
@@ -247,8 +243,7 @@ select_system_disk() {
     
     success "Диск системы: $SYS_DISK"
     
-    echo ""
-    warn "Вы выбрали: $SYS_DISK"
+    echo ""    warn "Вы выбрали: $SYS_DISK"
     read -p "Продолжить и УДАЛИТЬ все данные на этом диске? [YES/no]: " confirm
     if [[ "$confirm" != "YES" ]]; then
         error "Установка отменена пользователем"
@@ -297,8 +292,7 @@ select_games_disk() {
             info "Пропущено"
             return
         fi
-        if [[ "$disk_num" =~ ^[0-9]+$ ]] && [[ $disk_num -ge 1 ]] && [[ $disk_num -le ${#disks[@]} ]]; then
-            GAMES_DISK="/dev/${disks[$((disk_num-1))]}"
+        if [[ "$disk_num" =~ ^[0-9]+$ ]] && [[ $disk_num -ge 1 ]] && [[ $disk_num -le ${#disks[@]} ]]; then            GAMES_DISK="/dev/${disks[$((disk_num-1))]}"
             break
         fi
         warn "Неверный номер"
@@ -347,7 +341,6 @@ select_desktop() {
     done
     success "Окружение: $DE"
 }
-
 select_gpu_drivers() {
     echo ""
     info "=== Выбор видеокарты ==="
@@ -397,8 +390,7 @@ partition_disk() {
     else
         UEFI_MODE=false
         info "Обнаружен BIOS/Legacy режим"
-    fi
-    
+    fi    
     warn "Удаление существующих разделов на $SYS_DISK..."
     wipefs --all "$SYS_DISK" 2>/dev/null || true
     partx -d "$SYS_DISK" 2>/dev/null || true
@@ -447,8 +439,7 @@ mount_partitions() {
     if $UEFI_MODE; then
         mkdir -p "$TARGET_MOUNT/boot"
         mount "${EFI_PART}" "$TARGET_MOUNT/boot"
-    fi
-    
+    fi    
     success "Разделы смонтированы"
 }
 
@@ -466,9 +457,16 @@ setup_games_disk() {
         mkfs.ext4 -F "$GAMES_DISK"
     fi
     
+    # Создаём точку монтирования в целевой системе
     mkdir -p "$TARGET_MOUNT$GAMES_MOUNT_POINT"
     
+    # ИСПРАВЛЕНИЕ: Создаём директорию /etc если её ещё нет
+    mkdir -p "$TARGET_MOUNT/etc"
+    
+    # Получаем UUID диска
     GAMES_UUID=$(blkid -s UUID -o value "$GAMES_DISK")
+    
+    # Записываем в fstab.games
     echo "UUID=$GAMES_UUID $GAMES_MOUNT_POINT ext4 defaults,noatime,x-gvfs-show 0 2" >> "$TARGET_MOUNT/etc/fstab.games"
     
     success "Диск игр настроен: $GAMES_DISK → $GAMES_MOUNT_POINT"
@@ -490,8 +488,7 @@ install_base_system() {
     pacstrap -K "$TARGET_MOUNT" \
         base \
         linux linux-firmware \
-        e2fsprogs \
-        networkmanager \
+        e2fsprogs \        networkmanager \
         sudo \
         nano \
         vim \
@@ -515,14 +512,18 @@ configure_system() {
     
     info "Генерация fstab..."
     genfstab -U "$TARGET_MOUNT" >> "$TARGET_MOUNT/etc/fstab"
-    [[ -f "$TARGET_MOUNT/etc/fstab.games" ]] && cat "$TARGET_MOUNT/etc/fstab.games" >> "$TARGET_MOUNT/etc/fstab"
-    rm -f "$TARGET_MOUNT/etc/fstab.games"
+    
+    # Добавляем запись для игр если есть
+    if [[ -f "$TARGET_MOUNT/etc/fstab.games" ]]; then
+        cat "$TARGET_MOUNT/etc/fstab.games" >> "$TARGET_MOUNT/etc/fstab"
+        rm -f "$TARGET_MOUNT/etc/fstab.games"
+    fi
     
     info "Подготовка chroot окружения..."
     
     # Экспорт переменных для chroot
     export LOCALE KEYMAP XKB_OPTIONS TIMEZONE HOSTNAME USERNAME USER_PASS ROOT_PASS
-    export DE DE_PACKAGES DISPLAY_MANAGER GPU_DRIVERS GAMES_MOUNT_POINT SWAP_SIZE
+    export DE DE_PACKAGES DISPLAY_MANAGER GPU_DRIVERS GAMES_MOUNT_POINT SWAP_SIZE SYS_DISK
     
     cat > "$TARGET_MOUNT/root/post-install.sh" << 'CHROOT_SCRIPT'
 #!/bin/bash
@@ -536,8 +537,7 @@ echo "LANG=${LOCALE}" > /etc/locale.conf
 echo "KEYMAP=${KEYMAP%%,*}" > /etc/vconsole.conf
 [[ -n "$XKB_OPTIONS" ]] && echo "XKBOPTIONS=\"$XKB_OPTIONS\"" >> /etc/vconsole.conf
 
-# 2. Timezone
-ln -sf "/usr/share/zoneinfo/${TIMEZONE}" /etc/localtime
+# 2. Timezoneln -sf "/usr/share/zoneinfo/${TIMEZONE}" /etc/localtime
 hwclock --systohc
 
 # 3. Hostname
@@ -560,15 +560,16 @@ chmod 0440 /etc/sudoers.d/${USERNAME}
 # 6. Initramfs
 mkinitcpio -P
 
-# 7. Загрузчик
+# 7. Загрузчик - ИСПРАВЛЕНО
 if [[ -d /boot/efi ]] || [[ -d /boot/EFI ]]; then
     # UEFI режим
     grub-install --target=x86_64-efi --efi-directory=/boot --bootloader-id=ArchLinux
 else
-    # BIOS режим - используем SYS_DISK или определяем из fstab
+    # BIOS режим - используем SYS_DISK
     if [[ -n "$SYS_DISK" ]]; then
         grub-install --target=i386-pc "$SYS_DISK"
     else
+        # Пробуем определить из fstab
         ROOT_DEV=$(grep -v '^#' /etc/fstab | grep ' / ' | awk '{print $1}' | sed 's/[0-9]*$//')
         if [[ -n "$ROOT_DEV" ]]; then
             grub-install --target=i386-pc "$ROOT_DEV"
@@ -585,7 +586,6 @@ grub-mkconfig -o /boot/grub/grub.cfg
 
 # 8. Сеть
 systemctl enable NetworkManager
-
 # 9. Обновление системы
 pacman -Syu --noconfirm
 
@@ -635,8 +635,7 @@ yay -S --needed --noconfirm \
     google-chrome \
     vesktop \
     ayugram-desktop \
-    prismlauncher \
-    steam-tui \
+    prismlauncher \    steam-tui \
     proton-ge-custom-bin
 
 pacman -S --needed --noconfirm \
@@ -657,254 +656,4 @@ pacman -S --needed --noconfirm \
     protonup-qt
 
 # 17. Zapret
-if bash <(curl -s https://raw.githubusercontent.com/kartavkun/zapret-discord-youtube/main/setup.sh | psub) 2>/dev/null; then
-    echo "✓ Zapret установлен"
-else
-    sleep 2
-    bash <(curl -s https://raw.githubusercontent.com/kartavkun/zapret-discord-youtube/main/setup.sh | psub) || \
-    echo "⚠ Не удалось установить zapret автоматически"
-fi
-
-# 18. Оптимизации sysctl
-cat > /etc/sysctl.d/99-gaming.conf << 'EOF'
-vm.max_map_count = 2147483642
-vm.swappiness = 10
-vm.vfs_cache_pressure = 50
-vm.dirty_ratio = 40
-vm.dirty_background_ratio = 10
-vm.min_free_kbytes = 1048576
-kernel.sched_autogroup_enabled = 1
-net.core.rmem_max = 16777216
-net.core.wmem_max = 16777216
-net.core.netdev_max_backlog = 5000
-net.ipv4.tcp_fastopen = 3
-EOF
-sysctl --system
-
-# 19. I/O scheduler
-cat > /etc/udev/rules.d/60-ioschedulers.rules << 'EOF'
-ACTION=="add|change", KERNEL=="sd[a-z]", ATTR{queue/rotational}=="1", ATTR{queue/scheduler}="bfq"
-ACTION=="add|change", KERNEL=="sd[a-z]|nvme[0-9]*", ATTR{queue/rotational}=="0", ATTR{queue/scheduler}="none"
-EOF
-udevadm control --reload-rules && udevadm trigger
-
-# 20. Limits для игр
-cat >> /etc/security/limits.conf << 'EOF'
-@users soft nice -5
-@users hard nice -5
-@users soft rtprio 99
-@users hard rtprio 99
-EOF
-
-# 21. GameMode конфигурация
-mkdir -p /etc/gamemode
-cat > /etc/gamemode/gamemode.ini << 'EOF'
-[general]
-renice=15
-[cpu]
-governing=performance
-[gpu]
-apply_gpu_optimisations=accept-responsibility
-[io]
-ioprio=3
-[custom]
-start=systemctl stop fstrim.timer
-end=systemctl start fstrim.timer
-EOF
-
-# 22. TRIM для SSD
-systemctl enable --now fstrim.timer
-
-# 23. ШРИФТЫ - ПОЛНАЯ ПОДДЕРЖКА ВСЕХ ЯЗЫКОВ
-info "Установка шрифтов для всех языков..."
-pacman -S --needed --noconfirm \
-    ttf-liberation \
-    ttf-dejavu \
-    ttf-roboto \
-    ttf-roboto-mono \
-    ttf-droid \
-    ttf-ubuntu-font-family \
-    ttf-inconsolata \
-    ttf-fira-code \
-    ttf-jetbrains-mono \
-    noto-fonts \
-    noto-fonts-cjk \
-    noto-fonts-emoji \
-    noto-fonts-extra \
-    gnu-free-fonts \
-    terminus-font \
-    adobe-source-code-pro-fonts \
-    adobe-source-han-sans-cn-fonts \
-    adobe-source-han-sans-jp-fonts \
-    adobe-source-han-sans-kr-fonts \
-    adobe-source-han-serif-cn-fonts \
-    wqy-zenhei \
-    wqy-microhei \
-    otf-ipafont \
-    ttf-hack \
-    ttf-font-awesome \
-    ttf-twemoji-color \
-    ttf-ancient-fonts \
-    ttf-babelstone-modern \
-    ttf-jomolhari \
-    ttf-khmer \
-    ttf-lao \
-    ttf-syrcom \
-    ttf-thai \
-    ttf-vietnamese \
-    ttf-arabic \
-    ttf-hebrew \
-    ttf-greek \
-    ttf-cyrillic
-
-# Обновление кэша шрифтов
-fc-cache -fv
-
-success "Шрифты установлены (поддержка всех языков)"
-
-# 24. Папка для игр
-if [[ -n "${GAMES_MOUNT_POINT}" ]] && [[ ! -d "${GAMES_MOUNT_POINT}" ]]; then
-    mkdir -p "${GAMES_MOUNT_POINT}"
-    chown ${USERNAME}:${USERNAME} "${GAMES_MOUNT_POINT}"
-    chmod 755 "${GAMES_MOUNT_POINT}"
-fi
-
-# 25. Финальные сообщения
-echo ""
-echo "════════════════════════════════════════"
-echo "✅ Установка Arch Linux Gaming завершена!"
-echo "════════════════════════════════════════"
-echo ""
-echo "📋 Конфигурация:"
-echo "  • Файловая система: ext4"
-echo "  • Swap-файл: ${SWAP_SIZE}"
-echo "  • Шрифты: Полная поддержка всех языков"
-echo ""
-echo "🎮 Полезные команды:"
-echo "  • Запуск игры с GameMode: gamemoderun %command%"
-echo "  • Оверлей в игре: Shift+F3 (MangoHud)"
-echo "  • Обновление системы: yay -Syu"
-echo ""
-echo "🔄 Перезагрузите систему: reboot"
-echo ""
-
-rm -f /root/post-install.sh
-CHROOT_SCRIPT
-
-    chmod +x "$TARGET_MOUNT/root/post-install.sh"
-    
-    info "Запуск пост-установочной настройки..."
-    arch-chroot "$TARGET_MOUNT" /bin/bash /root/post-install.sh
-    
-    success "Система настроена"
-}
-
-setup_auto_run_after_install() {
-    info "Настройка авто-запуска при первом входе..."
-    
-    cat > "$TARGET_MOUNT/etc/systemd/system/gaming-first-run.service" << 'EOF'
-[Unit]
-Description=First Run Gaming Setup
-After=multi-user.target
-ConditionPathExists=!/var/lib/gaming-setup-done
-
-[Service]
-Type=oneshot
-ExecStart=/usr/local/bin/gaming-first-run.sh
-RemainAfterExit=yes
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-    cat > "$TARGET_MOUNT/usr/local/bin/gaming-first-run.sh" << 'EOF'
-#!/bin/bash
-USER=$(logname)
-HOME_DIR="/home/$USER"
-
-echo "🎮 Хотите установить оптимизированное ядро linux-zen? [y/N]"
-read -t 30 -r reply || true
-if [[ "$reply" =~ ^[Yy]$ ]]; then
-    yay -S --needed --noconfirm linux-zen linux-zen-headers
-    echo "✓ linux-zen установлен. Перезагрузитесь для применения!"
-fi
-
-touch /var/lib/gaming-setup-done
-systemctl disable gaming-first-run.service
-echo "✅ Первый запуск завершён!"
-EOF
-
-    chmod +x "$TARGET_MOUNT/usr/local/bin/gaming-first-run.sh"
-    arch-chroot "$TARGET_MOUNT" systemctl enable gaming-first-run.service
-}
-
-finalize_install() {
-    echo ""
-    success "════════════════════════════════════════"
-    success "✅ Arch Linux Gaming установлен!"
-    success "════════════════════════════════════════"
-    echo ""
-    echo "📋 Параметры установки:"
-    echo "  • Диск системы: $SYS_DISK"
-    [[ -n "$GAMES_DISK" ]] && echo "  • Диск игр: $GAMES_DISK → $GAMES_MOUNT_POINT"
-    echo "  • Файловая система: ext4"
-    echo "  • Swap-файл: ${SWAP_SIZE}"
-    echo "  • Окружение: $DE"
-    echo "  • Пользователь: $USERNAME"
-    echo "  • Язык: $LOCALE"
-    echo ""
-    echo "🎮 После перезагрузки:"
-    echo "  1. Войдите под пользователем: $USERNAME"
-    echo "  2. Запустите: yay -Syu (для обновлений)"
-    echo "  3. Настройте Steam: добавьте gamemoderun %command% в Launch Options"
-    echo "  4. В игре нажмите Shift+F3 для MangoHud"
-    echo ""
-    echo "⚠️  Перезагрузите систему сейчас:"
-    echo "  ${YELLOW}umount -R $TARGET_MOUNT && reboot${NC}"
-    echo ""
-    
-    read -n 1 -p "Размонтировать и подготовить к перезагрузке? [Y/n]: " unmount_confirm
-    echo
-    if [[ ! "$unmount_confirm" =~ ^[Nn]$ ]]; then
-        swapoff -a
-        umount -R "$TARGET_MOUNT"
-        success "Готово! Извлеките USB и перезагрузитесь."
-    fi
-}
-
-# =============================================================================
-# ГЛАВНАЯ ФУНКЦИЯ
-# =============================================================================
-
-main() {
-    INSTALL_STARTED=true
-    
-    echo -e "${GREEN}"
-    echo "╔════════════════════════════════════════════════════════╗"
-    echo "║     Arch Linux Gaming Installer v3.0                   ║"
-    echo "║     ext4 + Swap 8GB + Все шрифты (любой язык)          ║"
-    echo "╚════════════════════════════════════════════════════════╝"
-    echo -e "${NC}"
-    
-    check_root
-    check_live_env
-    
-    select_language
-    select_keymap
-    select_timezone
-    get_user_info
-    select_system_disk
-    select_games_disk
-    select_desktop
-    select_gpu_drivers
-    
-    partition_disk
-    mount_partitions
-    setup_games_disk
-    install_base_system
-    configure_system
-    setup_auto_run_after_install
-    finalize_install
-}
-
-main "$@"
+if bash <(curl -s https://raw.githubusercontent.com/kartavku
