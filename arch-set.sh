@@ -1,11 +1,10 @@
 #!/bin/bash
 # =============================================================================
-# Arch Linux Gaming Installer
-# Полная установка системы + игровое окружение с Live USB
-# Поддержка: GNOME / Plasma, выбор дисков, авто-настройка
+# Arch Linux Gaming Installer v3.0
+# ext4 + Swap File 8GB + Полная поддержка шрифтов (все языки)
 # =============================================================================
 
-set -e  # Выход при ошибке (можно отключить для отладки: set +e)
+set -e
 
 # Цвета
 RED='\033[0;31m'
@@ -17,7 +16,7 @@ NC='\033[0m'
 
 # Глобальные переменные
 TARGET_MOUNT="/mnt"
-GAMES_MOUNT_POINT="/games"  # Точка монтирования для игровой библиотеки
+SWAP_SIZE="8G"
 LOG_FILE="/tmp/arch-gaming-install.log"
 
 # Логирование
@@ -27,18 +26,14 @@ success() { echo -e "${GREEN}[OK]${NC} $1" | tee -a "$LOG_FILE"; }
 warn() { echo -e "${YELLOW}[WARN]${NC} $1" | tee -a "$LOG_FILE"; }
 error() { echo -e "${RED}[ERROR]${NC} $1" | tee -a "$LOG_FILE"; exit 1; }
 
-# =============================================================================
-# УТИЛИТЫ
-# =============================================================================
-
 # Проверка прав root
 check_root() {
     [[ $EUID -eq 0 ]] || error "Запустите скрипт от root (sudo su)"
 }
 
-# Проверка, что мы в Live-среде
+# Проверка Live-среды
 check_live_env() {
-    if [[ -f /etc/arch-release ]] && ! mountpoint -q /mnt 2>/dev/null; then
+    if [[ -f /etc/arch-release ]]; then
         info "Обнаружена Live-среда Arch Linux ✓"
         return 0
     fi
@@ -62,38 +57,38 @@ trap cleanup EXIT INT TERM
 # МЕНЮ И ВВОД ПОЛЬЗОВАТЕЛЯ
 # =============================================================================
 
-# Выбор языка системы
 select_language() {
     info "Выбор языка системы:"
     PS3="Введите номер: "
-    options=("en_US.UTF-8" "ru_RU.UTF-8" "de_DE.UTF-8" "fr_FR.UTF-8")
+    options=("en_US.UTF-8" "ru_RU.UTF-8" "de_DE.UTF-8" "fr_FR.UTF-8" "ja_JP.UTF-8" "zh_CN.UTF-8")
     select opt in "${options[@]}"; do
         case $opt in
             "en_US.UTF-8") LOCALE="en_US.UTF-8"; break ;;
             "ru_RU.UTF-8") LOCALE="ru_RU.UTF-8"; break ;;
             "de_DE.UTF-8") LOCALE="de_DE.UTF-8"; break ;;
             "fr_FR.UTF-8") LOCALE="fr_FR.UTF-8"; break ;;
+            "ja_JP.UTF-8") LOCALE="en_US.UTF-8"; break ;;
+            "zh_CN.UTF-8") LOCALE="en_US.UTF-8"; break ;;
             *) echo "Неверный выбор" ;;
         esac
     done
     success "Язык: $LOCALE"
 }
 
-# Выбор раскладки клавиатуры
 select_keymap() {
     info "Выбор раскладки клавиатуры:"
     PS3="Введите номер: "
-    options=("us" "ru" "de" "fr")
+    options=("us" "ru" "de" "fr" "jp")
     select opt in "${options[@]}"; do
         case $opt in
             "us") KEYMAP="us"; break ;;
             "ru") KEYMAP="ru"; break ;;
             "de") KEYMAP="de"; break ;;
             "fr") KEYMAP="fr"; break ;;
+            "jp") KEYMAP="jp"; break ;;
             *) echo "Неверный выбор" ;;
         esac
     done
-    # Для ru добавим переключение
     if [[ "$KEYMAP" == "ru" ]]; then
         KEYMAP="ru,us"
         XKB_OPTIONS="grp:alt_shift_toggle"
@@ -101,17 +96,18 @@ select_keymap() {
     success "Раскладка: $KEYMAP"
 }
 
-# Выбор часового пояса
 select_timezone() {
     info "Выбор часового пояса:"
     PS3="Введите номер: "
-    options=("Europe/Moscow" "Europe/Kiev" "Europe/London" "Europe/Berlin" "UTC")
+    options=("Europe/Moscow" "Europe/Kiev" "Europe/London" "Europe/Berlin" "Asia/Tokyo" "Asia/Shanghai" "UTC")
     select opt in "${options[@]}"; do
         case $opt in
             "Europe/Moscow") TIMEZONE="Europe/Moscow"; break ;;
             "Europe/Kiev") TIMEZONE="Europe/Kiev"; break ;;
             "Europe/London") TIMEZONE="Europe/London"; break ;;
             "Europe/Berlin") TIMEZONE="Europe/Berlin"; break ;;
+            "Asia/Tokyo") TIMEZONE="Asia/Tokyo"; break ;;
+            "Asia/Shanghai") TIMEZONE="Asia/Shanghai"; break ;;
             "UTC") TIMEZONE="UTC"; break ;;
             *) echo "Неверный выбор" ;;
         esac
@@ -119,7 +115,6 @@ select_timezone() {
     success "Часовой пояс: $TIMEZONE"
 }
 
-# Выбор имени хоста и пользователя
 get_user_info() {
     echo ""
     info "Настройка пользователя:"
@@ -150,21 +145,23 @@ get_user_info() {
     success "Пользователь: $USERNAME, Хост: $HOSTNAME"
 }
 
-# Выбор диска для системы
 select_system_disk() {
     echo ""
     info "=== Выбор диска для установки системы ==="
     warn "⚠️  Все данные на выбранном диске будут УДАЛЕНЫ!"
     echo ""
     
-    # Список дисков
-    disks=($(lsblk -d -n -o NAME,SIZE,TYPE | grep -w disk | awk '{print $1}'))
+    echo "Доступные диски:"
+    echo ""
+    lsblk -d -o NAME,SIZE,MODEL,TYPE | grep disk
+    echo ""
+    
+    disks=($(lsblk -d -n -o NAME | grep -v loop))
     
     if [[ ${#disks[@]} -eq 0 ]]; then
         error "Не найдено дисков для установки!"
     fi
     
-    echo "Доступные диски:"
     for i in "${!disks[@]}"; do
         disk_info=$(lsblk -d -n -o NAME,SIZE,MODEL /dev/${disks[$i]} 2>/dev/null | tr -s ' ')
         echo "  $((i+1))) /dev/${disks[$i]} - $disk_info"
@@ -182,7 +179,6 @@ select_system_disk() {
     
     success "Диск системы: $SYS_DISK"
     
-    # Подтверждение
     echo ""
     warn "Вы выбрали: $SYS_DISK"
     read -p "Продолжить и УДАЛИТЬ все данные на этом диске? [YES/no]: " confirm
@@ -191,7 +187,6 @@ select_system_disk() {
     fi
 }
 
-# Выбор диска для игр (опционально)
 select_games_disk() {
     echo ""
     info "=== Настройка диска для игр (опционально) ==="
@@ -205,7 +200,7 @@ select_games_disk() {
     fi
     
     info "Выберите диск для игровой библиотеки:"
-    disks=($(lsblk -d -n -o NAME,SIZE,TYPE | grep -w disk | grep -v "$(basename $SYS_DISK)" | awk '{print $1}'))
+    disks=($(lsblk -d -n -o NAME | grep -v loop | grep -v "$(basename $SYS_DISK)"))
     
     if [[ ${#disks[@]} -eq 0 ]]; then
         warn "Нет доступных дисков. Игры будут на системном разделе."
@@ -234,16 +229,16 @@ select_games_disk() {
         warn "Неверный номер"
     done
     
-    # Точка монтирования
-    read -p "Точка монтирования [${GAMES_MOUNT_POINT#}]: " custom_mount
+    read -p "Точка монтирования [/games]: " custom_mount
     if [[ -n "$custom_mount" ]]; then
         GAMES_MOUNT_POINT="/$custom_mount"
+    else
+        GAMES_MOUNT_POINT="/games"
     fi
     
     success "Диск игр: $GAMES_DISK → $GAMES_MOUNT_POINT"
 }
 
-# Выбор Desktop Environment
 select_desktop() {
     echo ""
     info "=== Выбор окружения рабочего стола ==="
@@ -273,7 +268,6 @@ select_desktop() {
     success "Окружение: $DE"
 }
 
-# Выбор драйверов видео
 select_gpu_drivers() {
     echo ""
     info "=== Выбор видеокарты ==="
@@ -310,13 +304,12 @@ select_gpu_drivers() {
 }
 
 # =============================================================================
-# РАЗБИЕНИЕ ДИСКА И ФАЙЛОВЫЕ СИСТЕМЫ
+# РАЗБИЕНИЕ ДИСКА (ext4)
 # =============================================================================
 
 partition_disk() {
-    info "=== Разбиение диска: $SYS_DISK ==="
+    info "=== Разбиение диска: $SYS_DISK (ext4) ==="
     
-    # Определение схемы разделов (UEFI или BIOS)
     if [[ -d /sys/firmware/efi ]]; then
         UEFI_MODE=true
         info "Обнаружен UEFI режим"
@@ -325,80 +318,55 @@ partition_disk() {
         info "Обнаружен BIOS/Legacy режим"
     fi
     
-    # Удаление существующих разделов
     warn "Удаление существующих разделов на $SYS_DISK..."
     wipefs --all "$SYS_DISK" 2>/dev/null || true
     partx -d "$SYS_DISK" 2>/dev/null || true
     
     if $UEFI_MODE; then
-        # UEFI: EFI + swap + root
         info "Создание разделов (UEFI):"
         echo "  - /dev/${SYS_DISK##*/}1 : EFI System Partition (512M)"
-        echo "  - /dev/${SYS_DISK##*/}2 : Swap (8G или 50% RAM)"
-        echo "  - /dev/${SYS_DISK##*/}3 : Root (остальное место)"
+        echo "  - /dev/${SYS_DISK##*/}2 : Root (ext4, всё остальное)"
+        echo "  - Swap: файл 8GB (будет создан после установки)"
         
-        # Создание разделов
         parted -s "$SYS_DISK" mklabel gpt
         parted -s "$SYS_DISK" mkpart primary fat32 1MiB 513MiB
         parted -s "$SYS_DISK" set 1 esp on
-        parted -s "$SYS_DISK" mkpart primary linux-swap 513MiB 8GB
-        parted -s "$SYS_DISK" mkpart primary btrfs 8GB 100%
+        parted -s "$SYS_DISK" mkpart primary ext4 513MiB 100%
         
-        # Форматирование
         mkfs.fat -F32 "${SYS_DISK}1"
-        mkswap "${SYS_DISK}2"
-        mkfs.btrfs -f "${SYS_DISK}3"  # Btrfs для снапшотов
+        mkfs.ext4 -F "${SYS_DISK}2"
         
-        # Переменные для монтирования
         EFI_PART="${SYS_DISK}1"
-        SWAP_PART="${SYS_DISK}2"
-        ROOT_PART="${SYS_DISK}3"
+        ROOT_PART="${SYS_DISK}2"
         
     else
-        # BIOS: boot + swap + root
         info "Создание разделов (BIOS):"
         echo "  - /dev/${SYS_DISK##*/}1 : BIOS Boot Partition (1M)"
-        echo "  - /dev/${SYS_DISK##*/}2 : Swap (8G или 50% RAM)"
-        echo "  - /dev/${SYS_DISK##*/}3 : Root (остальное место)"
+        echo "  - /dev/${SYS_DISK##*/}2 : Root (ext4, всё остальное)"
+        echo "  - Swap: файл 8GB (будет создан после установки)"
         
         parted -s "$SYS_DISK" mklabel msdos
         parted -s "$SYS_DISK" mkpart primary 1MiB 2MiB
         parted -s "$SYS_DISK" set 1 bios_grub on
-        parted -s "$SYS_DISK" mkpart primary linux-swap 2MiB 8GB
-        parted -s "$SYS_DISK" mkpart primary btrfs 8GB 100%
+        parted -s "$SYS_DISK" mkpart primary ext4 2MiB 100%
         
-        mkswap "${SYS_DISK}2"
-        mkfs.btrfs -f "${SYS_DISK}3"
+        mkfs.ext4 -F "${SYS_DISK}2"
         
-        SWAP_PART="${SYS_DISK}2"
-        ROOT_PART="${SYS_DISK}3"
+        ROOT_PART="${SYS_DISK}2"
     fi
     
-    success "Разделы созданы"
+    success "Разделы созданы (ext4)"
 }
 
 mount_partitions() {
     info "Монтирование разделов..."
     
-    # Root
-    mount -t btrfs "${ROOT_PART}" "$TARGET_MOUNT"
+    mount "${ROOT_PART}" "$TARGET_MOUNT"
     
-    # Создание подтомов Btrfs (опционально, для снапшотов)
-    btrfs subvolume create "$TARGET_MOUNT/@root" 2>/dev/null || true
-    btrfs subvolume create "$TARGET_MOUNT/@home" 2>/dev/null || true
-    umount "$TARGET_MOUNT"
-    mount -t btrfs -o subvol=@root "${ROOT_PART}" "$TARGET_MOUNT"
-    mkdir -p "$TARGET_MOUNT/home"
-    mount -t btrfs -o subvol=@home "${ROOT_PART}" "$TARGET_MOUNT/home"
-    
-    # EFI (если UEFI)
     if $UEFI_MODE; then
         mkdir -p "$TARGET_MOUNT/boot"
         mount "${EFI_PART}" "$TARGET_MOUNT/boot"
     fi
-    
-    # Swap
-    swapon "${SWAP_PART}"
     
     success "Разделы смонтированы"
 }
@@ -410,7 +378,6 @@ setup_games_disk() {
     
     info "Настройка диска для игр: $GAMES_DISK"
     
-    # Форматирование (если нужно)
     read -p "Отформатировать $GAMES_DISK? (ext4) [y/N]: " format_disk -n 1
     echo
     if [[ "$format_disk" =~ ^[Yy]$ ]]; then
@@ -418,10 +385,8 @@ setup_games_disk() {
         mkfs.ext4 -F "$GAMES_DISK"
     fi
     
-    # Создание точки монтирования в целевой системе
     mkdir -p "$TARGET_MOUNT$GAMES_MOUNT_POINT"
     
-    # Добавление в fstab (будет выполнено в chroot)
     GAMES_UUID=$(blkid -s UUID -o value "$GAMES_DISK")
     echo "UUID=$GAMES_UUID $GAMES_MOUNT_POINT ext4 defaults,noatime,x-gvfs-show 0 2" >> "$TARGET_MOUNT/etc/fstab.games"
     
@@ -435,20 +400,16 @@ setup_games_disk() {
 install_base_system() {
     info "=== Установка базовой системы ==="
     
-    # Синхронизация часов
     timedatectl set-ntp true
     
-    # Выбор зеркала (опционально)
     info "Обновление зеркал..."
-    reflector --country Russia --age 12 --protocol https --sort rate --save /etc/pacman.d/mirrorlist 2>/dev/null || \
-    cp /etc/pacman.d/mirrorlist /etc/pacman.d/mirrorlist.bak
+    reflector --country Russia --age 12 --protocol https --sort rate --save /etc/pacman.d/mirrorlist 2>/dev/null || true
     
-    # Установка базовых пакетов
-    info "Установка пакетов: base linux linux-firmware btrfs-progs..."
+    info "Установка пакетов: base linux linux-firmware ext4..."
     pacstrap -K "$TARGET_MOUNT" \
         base \
         linux linux-firmware \
-        btrfs-progs \
+        e2fsprogs \
         networkmanager \
         sudo \
         nano \
@@ -459,34 +420,29 @@ install_base_system() {
         dosfstools \
         mtools \
         os-prober \
-        grub efibootmgr  # Для UEFI, для BIOS только grub
+        grub efibootmgr
     
     success "Базовая система установлена"
 }
 
 # =============================================================================
-# НАСТРОЙКА УСТАНОВЛЕННОЙ СИСТЕМЫ (CHROOT)
+# НАСТРОЙКА СИСТЕМЫ (CHROOT)
 # =============================================================================
 
 configure_system() {
     info "=== Настройка системы ==="
     
-    # fstab
     info "Генерация fstab..."
     genfstab -U "$TARGET_MOUNT" >> "$TARGET_MOUNT/etc/fstab"
-    # Добавляем запись для игр если есть
     [[ -f "$TARGET_MOUNT/etc/fstab.games" ]] && cat "$TARGET_MOUNT/etc/fstab.games" >> "$TARGET_MOUNT/etc/fstab"
     rm -f "$TARGET_MOUNT/etc/fstab.games"
     
-    # Chroot подготовка
     info "Подготовка chroot окружения..."
     
-    # Создание скрипта настройки внутри chroot
     cat > "$TARGET_MOUNT/root/post-install.sh" << 'CHROOT_SCRIPT'
 #!/bin/bash
 set -e
 
-# Переменные из основного скрипта
 LOCALE="${LOCALE}"
 KEYMAP="${KEYMAP}"
 TIMEZONE="${TIMEZONE}"
@@ -499,9 +455,11 @@ DE_PACKAGES="${DE_PACKAGES}"
 DISPLAY_MANAGER="${DISPLAY_MANAGER}"
 GPU_DRIVERS="${GPU_DRIVERS}"
 GAMES_MOUNT_POINT="${GAMES_MOUNT_POINT}"
+SWAP_SIZE="${SWAP_SIZE:-8G}"
 
 # 1. Locale
 echo "${LOCALE} UTF-8" > /etc/locale.gen
+echo "en_US.UTF-8 UTF-8" >> /etc/locale.gen
 locale-gen
 echo "LANG=${LOCALE}" > /etc/locale.conf
 echo "KEYMAP=${KEYMAP%%,*}" > /etc/vconsole.conf
@@ -522,24 +480,23 @@ EOF
 # 4. Root password
 echo "root:${ROOT_PASS}" | chpasswd
 
-# 5. Пользователь
+# 5. Пользователь + sudoers
 useradd -m -G wheel,audio,video,storage,input,kvm,render -s /bin/bash "${USERNAME}"
 echo "${USERNAME}:${USER_PASS}" | chpasswd
 echo "${USERNAME} ALL=(ALL:ALL) NOPASSWD: ALL" > /etc/sudoers.d/${USERNAME}
 chmod 0440 /etc/sudoers.d/${USERNAME}
 
-# 6. Initramfs и ядро
+# 6. Initramfs
 mkinitcpio -P
 
 # 7. Загрузчик
-if [[ -d /boot/efi ]]; then
-    # UEFI
+if [[ -d /boot/efi ]] || [[ -d /boot/EFI ]]; then
     grub-install --target=x86_64-efi --efi-directory=/boot --bootloader-id=ArchLinux
 else
-    # BIOS
-    grub-install --target=i386-pc "$(grep -v '^#' /etc/fstab | grep ' / ' | awk '{print $1}' | sed 's/[0-9]*$//')"
+    ROOT_DEV=$(grep -v '^#' /etc/fstab | grep ' / ' | awk '{print $1}' | sed 's/[0-9]*$//')
+    grub-install --target=i386-pc "$ROOT_DEV"
 fi
-# Параметры ядра для игр
+
 GRUB_CMDLINE="quiet splash loglevel=3 mitigations=off pcie_aspm=off processor.max_cstate=1"
 sed -i "s/GRUB_CMDLINE_LINUX_DEFAULT=\".*\"/GRUB_CMDLINE_LINUX_DEFAULT=\"$GRUB_CMDLINE\"/" /etc/default/grub
 grub-mkconfig -o /boot/grub/grub.cfg
@@ -547,15 +504,15 @@ grub-mkconfig -o /boot/grub/grub.cfg
 # 8. Сеть
 systemctl enable NetworkManager
 
-# 9. Установка DE и драйверов
+# 9. Обновление системы
 pacman -Syu --noconfirm
 
-# Видео драйверы
+# 10. Видео драйверы
 if [[ -n "${GPU_DRIVERS}" ]]; then
     pacman -S --needed --noconfirm ${GPU_DRIVERS}
 fi
 
-# Desktop Environment
+# 11. Desktop Environment
 if [[ "$DE" == "gnome" ]]; then
     pacman -S --needed --noconfirm ${DE_PACKAGES}
     systemctl enable gdm
@@ -567,14 +524,23 @@ elif [[ "$DE" == "minimal" ]]; then
     systemctl enable lightdm
 fi
 
-# 10. Установка yay (AUR helper)
+# 12. SWAP FILE 8GB
+info "Создание swap-файла ${SWAP_SIZE}..."
+fallocate -l ${SWAP_SIZE} /swapfile
+chmod 600 /swapfile
+mkswap /swapfile
+swapon /swapfile
+echo "/swapfile none swap defaults 0 0" >> /etc/fstab
+success "Swap-файл ${SWAP_SIZE} создан"
+
+# 13. Установка yay
 cd /tmp
 git clone https://aur.archlinux.org/yay.git
 cd yay
 makepkg -si --noconfirm
 cd /tmp && rm -rf yay
 
-# 11. Настройка репозитория CachyOS
+# 14. CachyOS репозиторий
 curl -L https://mirror.cachyos.org/cachyos-repo.tar.xz -o /tmp/cachyos-repo.tar.xz
 tar xvf /tmp/cachyos-repo.tar.xz -C /tmp && cd /tmp/cachyos-repo
 ./cachyos-repo.sh
@@ -582,7 +548,7 @@ pacman-key --populate cachyos
 pacman -Syyu --noconfirm
 cd / && rm -rf /tmp/cachyos-repo /tmp/cachyos-repo.tar.xz
 
-# 12. Установка игровых пакетов
+# 15. Игровые пакеты
 yay -S --needed --noconfirm \
     google-chrome \
     vesktop \
@@ -597,10 +563,9 @@ pacman -S --needed --noconfirm \
     nodejs \
     python310
 
-# Flatpak репозиторий
 flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
 
-# 13. Игровые утилиты
+# 16. Игровые утилиты
 pacman -S --needed --noconfirm \
     gamemode lib32-gamemode \
     goverlay \
@@ -609,7 +574,7 @@ pacman -S --needed --noconfirm \
     vkd3d-proton \
     protonup-qt
 
-# 14. Zapret для обхода блокировок
+# 17. Zapret
 if bash <(curl -s https://raw.githubusercontent.com/kartavkun/zapret-discord-youtube/main/setup.sh | psub) 2>/dev/null; then
     echo "✓ Zapret установлен"
 else
@@ -618,7 +583,7 @@ else
     echo "⚠ Не удалось установить zapret автоматически"
 fi
 
-# 15. Оптимизации sysctl
+# 18. Оптимизации sysctl
 cat > /etc/sysctl.d/99-gaming.conf << 'EOF'
 vm.max_map_count = 2147483642
 vm.swappiness = 10
@@ -634,14 +599,14 @@ net.ipv4.tcp_fastopen = 3
 EOF
 sysctl --system
 
-# 16. I/O scheduler
+# 19. I/O scheduler
 cat > /etc/udev/rules.d/60-ioschedulers.rules << 'EOF'
 ACTION=="add|change", KERNEL=="sd[a-z]", ATTR{queue/rotational}=="1", ATTR{queue/scheduler}="bfq"
 ACTION=="add|change", KERNEL=="sd[a-z]|nvme[0-9]*", ATTR{queue/rotational}=="0", ATTR{queue/scheduler}="none"
 EOF
 udevadm control --reload-rules && udevadm trigger
 
-# 17. Limits для игр
+# 20. Limits для игр
 cat >> /etc/security/limits.conf << 'EOF'
 @users soft nice -5
 @users hard nice -5
@@ -649,7 +614,7 @@ cat >> /etc/security/limits.conf << 'EOF'
 @users hard rtprio 99
 EOF
 
-# 18. GameMode конфигурация
+# 21. GameMode конфигурация
 mkdir -p /etc/gamemode
 cat > /etc/gamemode/gamemode.ini << 'EOF'
 [general]
@@ -665,26 +630,73 @@ start=systemctl stop fstrim.timer
 end=systemctl start fstrim.timer
 EOF
 
-# 19. TRIM для SSD
+# 22. TRIM для SSD
 systemctl enable --now fstrim.timer
 
-# 20. Шрифты
+# 23. ШРИФТЫ - ПОЛНАЯ ПОДДЕРЖКА ВСЕХ ЯЗЫКОВ
+info "Установка шрифтов для всех языков..."
 pacman -S --needed --noconfirm \
-    ttf-liberation ttf-dejavu ttf-roboto \
-    noto-fonts noto-fonts-cjk noto-fonts-emoji
+    ttf-liberation \
+    ttf-dejavu \
+    ttf-roboto \
+    ttf-roboto-mono \
+    ttf-droid \
+    ttf-ubuntu-font-family \
+    ttf-inconsolata \
+    ttf-fira-code \
+    ttf-jetbrains-mono \
+    noto-fonts \
+    noto-fonts-cjk \
+    noto-fonts-emoji \
+    noto-fonts-extra \
+    gnu-free-fonts \
+    terminus-font \
+    adobe-source-code-pro-fonts \
+    adobe-source-han-sans-cn-fonts \
+    adobe-source-han-sans-jp-fonts \
+    adobe-source-han-sans-kr-fonts \
+    adobe-source-han-serif-cn-fonts \
+    wqy-zenhei \
+    wqy-microhei \
+    otf-ipafont \
+    ttf-hack \
+    ttf-font-awesome \
+    ttf-twemoji-color \
+    ttf-ancient-fonts \
+    ttf-babelstone-modern \
+    ttf-jomolhari \
+    ttf-khmer \
+    ttf-lao \
+    ttf-syrcom \
+    ttf-thai \
+    ttf-vietnamese \
+    ttf-arabic \
+    ttf-hebrew \
+    ttf-greek \
+    ttf-cyrillic
 
-# 21. Создание папки для игр (если отдельный диск)
+# Обновление кэша шрифтов
+fc-cache -fv
+
+success "Шрифты установлены (поддержка всех языков)"
+
+# 24. Папка для игр
 if [[ -n "${GAMES_MOUNT_POINT}" ]] && [[ ! -d "${GAMES_MOUNT_POINT}" ]]; then
     mkdir -p "${GAMES_MOUNT_POINT}"
     chown ${USERNAME}:${USERNAME} "${GAMES_MOUNT_POINT}"
     chmod 755 "${GAMES_MOUNT_POINT}"
 fi
 
-# 22. Финальные сообщения
+# 25. Финальные сообщения
 echo ""
 echo "════════════════════════════════════════"
 echo "✅ Установка Arch Linux Gaming завершена!"
 echo "════════════════════════════════════════"
+echo ""
+echo "📋 Конфигурация:"
+echo "  • Файловая система: ext4"
+echo "  • Swap-файл: ${SWAP_SIZE}"
+echo "  • Шрифты: Полная поддержка всех языков"
 echo ""
 echo "🎮 Полезные команды:"
 echo "  • Запуск игры с GameMode: gamemoderun %command%"
@@ -694,25 +706,18 @@ echo ""
 echo "🔄 Перезагрузите систему: reboot"
 echo ""
 
-# Удаление скрипта
 rm -f /root/post-install.sh
 CHROOT_SCRIPT
 
     chmod +x "$TARGET_MOUNT/root/post-install.sh"
     
-    # Выполнение скрипта в chroot
     info "Запуск пост-установочной настройки..."
     arch-chroot "$TARGET_MOUNT" /bin/bash /root/post-install.sh
     
     success "Система настроена"
 }
 
-# =============================================================================
-# АВТООБНОВЛЕНИЕ СКРИПТА (для повторного запуска после установки)
-# =============================================================================
-
 setup_auto_run_after_install() {
-    # Этот блок создаёт systemd сервис для первого входа
     info "Настройка авто-запуска при первом входе..."
     
     cat > "$TARGET_MOUNT/etc/systemd/system/gaming-first-run.service" << 'EOF'
@@ -732,12 +737,9 @@ EOF
 
     cat > "$TARGET_MOUNT/usr/local/bin/gaming-first-run.sh" << 'EOF'
 #!/bin/bash
-# Скрипт первого запуска - дополнительные настройки от пользователя
-
 USER=$(logname)
 HOME_DIR="/home/$USER"
 
-# Предложить установить linux-zen ядро
 echo "🎮 Хотите установить оптимизированное ядро linux-zen? [y/N]"
 read -t 30 -r reply || true
 if [[ "$reply" =~ ^[Yy]$ ]]; then
@@ -745,26 +747,14 @@ if [[ "$reply" =~ ^[Yy]$ ]]; then
     echo "✓ linux-zen установлен. Перезагрузитесь для применения!"
 fi
 
-# Настройка Steam для GameMode
-if [[ -d "$HOME_DIR/.steam" ]]; then
-    echo "🎮 Настройка Steam для GameMode..."
-    # Можно добавить автоматическое добавление %command% к играм
-fi
-
-# Маркер выполнения
 touch /var/lib/gaming-setup-done
 systemctl disable gaming-first-run.service
-
 echo "✅ Первый запуск завершён!"
 EOF
 
     chmod +x "$TARGET_MOUNT/usr/local/bin/gaming-first-run.sh"
     arch-chroot "$TARGET_MOUNT" systemctl enable gaming-first-run.service
 }
-
-# =============================================================================
-# ФИНАЛИЗАЦИЯ
-# =============================================================================
 
 finalize_install() {
     echo ""
@@ -775,6 +765,8 @@ finalize_install() {
     echo "📋 Параметры установки:"
     echo "  • Диск системы: $SYS_DISK"
     [[ -n "$GAMES_DISK" ]] && echo "  • Диск игр: $GAMES_DISK → $GAMES_MOUNT_POINT"
+    echo "  • Файловая система: ext4"
+    echo "  • Swap-файл: ${SWAP_SIZE}"
     echo "  • Окружение: $DE"
     echo "  • Пользователь: $USERNAME"
     echo "  • Язык: $LOCALE"
@@ -789,7 +781,6 @@ finalize_install() {
     echo "  ${YELLOW}umount -R $TARGET_MOUNT && reboot${NC}"
     echo ""
     
-    # Размонтирование
     read -p "Размонтировать и подготовить к перезагрузке? [Y/n]: " unmount_confirm -n 1
     echo
     if [[ ! "$unmount_confirm" =~ ^[Nn]$ ]]; then
@@ -808,15 +799,14 @@ main() {
     
     echo -e "${GREEN}"
     echo "╔════════════════════════════════════════════════════════╗"
-    echo "║     Arch Linux Gaming Installer v2.0                   ║"
-    echo "║     Полная установка с Live USB + игровые оптимизации  ║"
+    echo "║     Arch Linux Gaming Installer v3.0                   ║"
+    echo "║     ext4 + Swap 8GB + Все шрифты (любой язык)          ║"
     echo "╚════════════════════════════════════════════════════════╝"
     echo -e "${NC}"
     
     check_root
     check_live_env
     
-    # Сбор информации
     select_language
     select_keymap
     select_timezone
@@ -826,7 +816,6 @@ main() {
     select_desktop
     select_gpu_drivers
     
-    # Установка
     partition_disk
     mount_partitions
     setup_games_disk
@@ -836,5 +825,4 @@ main() {
     finalize_install
 }
 
-# Запуск
 main "$@"
