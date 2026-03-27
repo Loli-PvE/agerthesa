@@ -562,10 +562,21 @@ mkinitcpio -P
 
 # 7. Загрузчик
 if [[ -d /boot/efi ]] || [[ -d /boot/EFI ]]; then
+    # UEFI режим
     grub-install --target=x86_64-efi --efi-directory=/boot --bootloader-id=ArchLinux
 else
-    ROOT_DEV=$(grep -v '^#' /etc/fstab | grep ' / ' | awk '{print $1}' | sed 's/[0-9]*$//')
-    grub-install --target=i386-pc "$ROOT_DEV"
+    # BIOS режим - используем SYS_DISK или определяем из fstab
+    if [[ -n "$SYS_DISK" ]]; then
+        grub-install --target=i386-pc "$SYS_DISK"
+    else
+        ROOT_DEV=$(grep -v '^#' /etc/fstab | grep ' / ' | awk '{print $1}' | sed 's/[0-9]*$//')
+        if [[ -n "$ROOT_DEV" ]]; then
+            grub-install --target=i386-pc "$ROOT_DEV"
+        else
+            echo "ERROR: Cannot determine root device for GRUB installation"
+            exit 1
+        fi
+    fi
 fi
 
 GRUB_CMDLINE="quiet splash loglevel=3 mitigations=off pcie_aspm=off processor.max_cstate=1"
