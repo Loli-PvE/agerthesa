@@ -2,6 +2,7 @@
 # =============================================================================
 # Arch Linux Gaming Installer v3.0
 # ext4 + Swap File 8GB + Полная поддержка шрифтов (все языки)
+# Исправленная версия
 # =============================================================================
 
 set -e
@@ -18,6 +19,7 @@ NC='\033[0m'
 TARGET_MOUNT="/mnt"
 SWAP_SIZE="8G"
 LOG_FILE="/tmp/arch-gaming-install.log"
+GAMES_MOUNT_POINT="/games"
 
 # Логирование
 log() { echo -e "${BLUE}[LOG]${NC} $1" | tee -a "$LOG_FILE"; }
@@ -38,7 +40,7 @@ check_live_env() {
         return 0
     fi
     warn "Скрипт предназначен для запуска с Live USB Arch Linux"
-    read -p "Продолжить? [y/N]: " -n 1 -r
+    read -p "Продолжить? [y/N]: " -r
     echo
     [[ $REPLY =~ ^[Yy]$ ]] || exit 1
 }
@@ -59,17 +61,26 @@ trap cleanup EXIT INT TERM
 
 select_language() {
     info "Выбор языка системы:"
-    PS3="Введите номер: "
-    options=("en_US.UTF-8" "ru_RU.UTF-8" "de_DE.UTF-8" "fr_FR.UTF-8" "ja_JP.UTF-8" "zh_CN.UTF-8")
-    select opt in "${options[@]}"; do
-        case $opt in
-            "en_US.UTF-8") LOCALE="en_US.UTF-8"; break ;;
-            "ru_RU.UTF-8") LOCALE="ru_RU.UTF-8"; break ;;
-            "de_DE.UTF-8") LOCALE="de_DE.UTF-8"; break ;;
-            "fr_FR.UTF-8") LOCALE="fr_FR.UTF-8"; break ;;
-            "ja_JP.UTF-8") LOCALE="en_US.UTF-8"; break ;;
-            "zh_CN.UTF-8") LOCALE="en_US.UTF-8"; break ;;
-            *) echo "Неверный выбор" ;;
+    echo ""
+    echo "  1) en_US.UTF-8 (English)"
+    echo "  2) ru_RU.UTF-8 (Russian)"
+    echo "  3) de_DE.UTF-8 (German)"
+    echo "  4) fr_FR.UTF-8 (French)"
+    echo "  5) ja_JP.UTF-8 (Japanese)"
+    echo "  6) zh_CN.UTF-8 (Chinese)"
+    echo ""
+    
+    while true; do
+        read -p "Выберите номер (1-6) [2]: " lang_num
+        lang_num="${lang_num:-2}"
+        case $lang_num in
+            1) LOCALE="en_US.UTF-8"; break ;;
+            2) LOCALE="ru_RU.UTF-8"; break ;;
+            3) LOCALE="de_DE.UTF-8"; break ;;
+            4) LOCALE="fr_FR.UTF-8"; break ;;
+            5) LOCALE="ja_JP.UTF-8"; break ;;
+            6) LOCALE="zh_CN.UTF-8"; break ;;
+            *) echo "Неверный выбор, попробуйте снова" ;;
         esac
     done
     success "Язык: $LOCALE"
@@ -77,38 +88,95 @@ select_language() {
 
 select_keymap() {
     info "Выбор раскладки клавиатуры:"
-    PS3="Введите номер: "
-    options=("us" "ru" "de" "fr" "jp")
-    select opt in "${options[@]}"; do
-        case $opt in
-            "us") KEYMAP="us"; break ;;
-            "ru") KEYMAP="ru"; break ;;
-            "de") KEYMAP="de"; break ;;
-            "fr") KEYMAP="fr"; break ;;
-            "jp") KEYMAP="jp"; break ;;
-            *) echo "Неверный выбор" ;;
+    echo ""
+    echo "Доступные раскладки:"
+    echo "  1) us (английская)"
+    echo "  2) ru (русская)"
+    echo "  3) de (немецкая)"
+    echo "  4) fr (французская)"
+    echo "  5) jp (японская)"
+    echo ""
+    
+    while true; do
+        read -p "Выберите основную раскладку (1-5) [2]: " main_keymap_num
+        main_keymap_num="${main_keymap_num:-2}"
+        case $main_keymap_num in
+            1) MAIN_KEYMAP="us" ;;
+            2) MAIN_KEYMAP="ru" ;;
+            3) MAIN_KEYMAP="de" ;;
+            4) MAIN_KEYMAP="fr" ;;
+            5) MAIN_KEYMAP="jp" ;;
+            *) echo "Неверный выбор"; continue ;;
         esac
+        break
     done
-    if [[ "$KEYMAP" == "ru" ]]; then
-        KEYMAP="ru,us"
-        XKB_OPTIONS="grp:alt_shift_toggle"
+    
+    # Предложение добавить вторую раскладку
+    echo ""
+    read -n 1 -p "Добавить вторую раскладку для переключения? [y/N]: " add_second
+    echo
+    
+    if [[ "$add_second" =~ ^[Yy]$ ]]; then
+        echo "Выберите вторую раскладку:"
+        echo "  1) us (английская)"
+        echo "  2) ru (русская)"
+        echo "  3) de (немецкая)"
+        echo "  4) fr (французская)"
+        echo "  5) jp (японская)"
+        echo ""
+        
+        while true; do
+            read -p "Вторая раскладка (1-5): " second_keymap_num
+            case $second_keymap_num in
+                1) SECOND_KEYMAP="us" ;;
+                2) SECOND_KEYMAP="ru" ;;
+                3) SECOND_KEYMAP="de" ;;
+                4) SECOND_KEYMAP="fr" ;;
+                5) SECOND_KEYMAP="jp" ;;
+                *) echo "Неверный выбор"; continue ;;
+            esac
+            break
+        done
+        
+        if [[ -n "$SECOND_KEYMAP" ]] && [[ "$SECOND_KEYMAP" != "$MAIN_KEYMAP" ]]; then
+            KEYMAP="${MAIN_KEYMAP},${SECOND_KEYMAP}"
+            XKB_OPTIONS="grp:alt_shift_toggle"
+            success "Раскладки: $KEYMAP (переключение: Alt+Shift)"
+        else
+            KEYMAP="$MAIN_KEYMAP"
+            XKB_OPTIONS=""
+            success "Раскладка: $KEYMAP"
+        fi
+    else
+        KEYMAP="$MAIN_KEYMAP"
+        XKB_OPTIONS=""
+        success "Раскладка: $KEYMAP"
     fi
-    success "Раскладка: $KEYMAP"
 }
 
 select_timezone() {
     info "Выбор часового пояса:"
-    PS3="Введите номер: "
-    options=("Europe/Moscow" "Europe/Kiev" "Europe/London" "Europe/Berlin" "Asia/Tokyo" "Asia/Shanghai" "UTC")
-    select opt in "${options[@]}"; do
-        case $opt in
-            "Europe/Moscow") TIMEZONE="Europe/Moscow"; break ;;
-            "Europe/Kiev") TIMEZONE="Europe/Kiev"; break ;;
-            "Europe/London") TIMEZONE="Europe/London"; break ;;
-            "Europe/Berlin") TIMEZONE="Europe/Berlin"; break ;;
-            "Asia/Tokyo") TIMEZONE="Asia/Tokyo"; break ;;
-            "Asia/Shanghai") TIMEZONE="Asia/Shanghai"; break ;;
-            "UTC") TIMEZONE="UTC"; break ;;
+    echo ""
+    echo "  1) Europe/Moscow (Москва)"
+    echo "  2) Europe/Kiev (Киев)"
+    echo "  3) Europe/London (Лондон)"
+    echo "  4) Europe/Berlin (Берлин)"
+    echo "  5) Asia/Tokyo (Токио)"
+    echo "  6) Asia/Shanghai (Шанхай)"
+    echo "  7) UTC"
+    echo ""
+    
+    while true; do
+        read -p "Выберите номер (1-7) [1]: " tz_num
+        tz_num="${tz_num:-1}"
+        case $tz_num in
+            1) TIMEZONE="Europe/Moscow"; break ;;
+            2) TIMEZONE="Europe/Kiev"; break ;;
+            3) TIMEZONE="Europe/London"; break ;;
+            4) TIMEZONE="Europe/Berlin"; break ;;
+            5) TIMEZONE="Asia/Tokyo"; break ;;
+            6) TIMEZONE="Asia/Shanghai"; break ;;
+            7) TIMEZONE="UTC"; break ;;
             *) echo "Неверный выбор" ;;
         esac
     done
@@ -156,7 +224,7 @@ select_system_disk() {
     lsblk -d -o NAME,SIZE,MODEL,TYPE | grep disk
     echo ""
     
-    disks=($(lsblk -d -n -o NAME | grep -v loop))
+    mapfile -t disks < <(lsblk -d -n -o NAME | grep -v loop)
     
     if [[ ${#disks[@]} -eq 0 ]]; then
         error "Не найдено дисков для установки!"
@@ -190,7 +258,11 @@ select_system_disk() {
 select_games_disk() {
     echo ""
     info "=== Настройка диска для игр (опционально) ==="
-    read -p "Использовать отдельный диск для игр? [y/N]: " use_games_disk -n 1
+    echo "Отдельный диск для игр позволит хранить игры отдельно от системы."
+    echo "Это удобно для переустановки системы без удаления игр."
+    echo ""
+    
+    read -n 1 -p "Использовать отдельный диск для игр? [y/N]: " use_games_disk
     echo
     
     if [[ ! "$use_games_disk" =~ ^[Yy]$ ]]; then
@@ -200,7 +272,9 @@ select_games_disk() {
     fi
     
     info "Выберите диск для игровой библиотеки:"
-    disks=($(lsblk -d -n -o NAME | grep -v loop | grep -v "$(basename $SYS_DISK)"))
+    
+    # Получаем список дисков кроме системного
+    mapfile -t disks < <(lsblk -d -n -o NAME | grep -v loop | grep -v "$(basename $SYS_DISK)")
     
     if [[ ${#disks[@]} -eq 0 ]]; then
         warn "Нет доступных дисков. Игры будут на системном разделе."
@@ -213,10 +287,11 @@ select_games_disk() {
         disk_info=$(lsblk -d -n -o NAME,SIZE,MODEL /dev/${disks[$i]} 2>/dev/null | tr -s ' ')
         echo "  $((i+1))) /dev/${disks[$i]} - $disk_info"
     done
+    echo "  0) Пропустить"
     echo ""
     
     while true; do
-        read -p "Выберите номер диска (или 0 для пропуска): " disk_num
+        read -p "Выберите номер диска: " disk_num
         if [[ "$disk_num" == "0" ]]; then
             GAMES_DISK=""
             info "Пропущено"
@@ -242,22 +317,27 @@ select_games_disk() {
 select_desktop() {
     echo ""
     info "=== Выбор окружения рабочего стола ==="
-    PS3="Введите номер: "
-    options=("GNOME" "Plasma (KDE)" "Minimal (только окно входа)")
+    echo ""
+    echo "  1) GNOME (современное, много функций)"
+    echo "  2) Plasma KDE (лёгкое, настраиваемое)"
+    echo "  3) Minimal (только окно входа, без DE)"
+    echo ""
     
-    select opt in "${options[@]}"; do
-        case $opt in
-            "GNOME") 
+    while true; do
+        read -p "Выберите номер (1-3) [2]: " de_num
+        de_num="${de_num:-2}"
+        case $de_num in
+            1) 
                 DE="gnome"
                 DE_PACKAGES="gnome gnome-extra"
                 DISPLAY_MANAGER="gdm"
                 break ;;
-            "Plasma (KDE)") 
+            2) 
                 DE="plasma"
                 DE_PACKAGES="plasma plasma-meta konsole dolphin"
                 DISPLAY_MANAGER="sddm"
                 break ;;
-            "Minimal (только окно входа)") 
+            3) 
                 DE="minimal"
                 DE_PACKAGES="xorg-server xorg-xinit"
                 DISPLAY_MANAGER="lightdm"
@@ -271,29 +351,30 @@ select_desktop() {
 select_gpu_drivers() {
     echo ""
     info "=== Выбор видеокарты ==="
-    PS3="Введите номер: "
-    options=(
-        "NVIDIA (проприетарные, версия 580xx)"
-        "NVIDIA (проприетарные, актуальные)"
-        "AMD / Intel (открытые)"
-        "VirtualBox / VMware"
-    )
+    echo ""
+    echo "  1) NVIDIA (проприетарные, версия 580xx)"
+    echo "  2) NVIDIA (проприетарные, актуальные)"
+    echo "  3) AMD / Intel (открытые)"
+    echo "  4) VirtualBox / VMware"
+    echo ""
     
-    select opt in "${options[@]}"; do
-        case $opt in
-            "NVIDIA (проприетарные, версия 580xx)")
+    while true; do
+        read -p "Выберите номер (1-4) [3]: " gpu_num
+        gpu_num="${gpu_num:-3}"
+        case $gpu_num in
+            1)
                 GPU_DRIVERS="nvidia-580xx-dkms nvidia-580xx-utils lib32-nvidia-580xx-utils"
                 GPU_AUR="yay"
                 break ;;
-            "NVIDIA (проприетарные, актуальные)")
+            2)
                 GPU_DRIVERS="nvidia-dkms nvidia-utils lib32-nvidia-utils nvidia-settings"
                 GPU_AUR="yay"
                 break ;;
-            "AMD / Intel (открытые)")
+            3)
                 GPU_DRIVERS="mesa lib32-mesa xf86-video-amdgpu xf86-video-intel vulkan-radeon lib32-vulkan-radeon"
                 GPU_AUR=""
                 break ;;
-            "VirtualBox / VMware")
+            4)
                 GPU_DRIVERS="virtualbox-guest-utils open-vm-tools"
                 GPU_AUR=""
                 break ;;
@@ -378,7 +459,7 @@ setup_games_disk() {
     
     info "Настройка диска для игр: $GAMES_DISK"
     
-    read -p "Отформатировать $GAMES_DISK? (ext4) [y/N]: " format_disk -n 1
+    read -n 1 -p "Отформатировать $GAMES_DISK? (ext4) [y/N]: " format_disk
     echo
     if [[ "$format_disk" =~ ^[Yy]$ ]]; then
         wipefs --all "$GAMES_DISK" 2>/dev/null || true
@@ -439,23 +520,13 @@ configure_system() {
     
     info "Подготовка chroot окружения..."
     
+    # Экспорт переменных для chroot
+    export LOCALE KEYMAP XKB_OPTIONS TIMEZONE HOSTNAME USERNAME USER_PASS ROOT_PASS
+    export DE DE_PACKAGES DISPLAY_MANAGER GPU_DRIVERS GAMES_MOUNT_POINT SWAP_SIZE
+    
     cat > "$TARGET_MOUNT/root/post-install.sh" << 'CHROOT_SCRIPT'
 #!/bin/bash
 set -e
-
-LOCALE="${LOCALE}"
-KEYMAP="${KEYMAP}"
-TIMEZONE="${TIMEZONE}"
-HOSTNAME="${HOSTNAME}"
-USERNAME="${USERNAME}"
-USER_PASS="${USER_PASS}"
-ROOT_PASS="${ROOT_PASS}"
-DE="${DE}"
-DE_PACKAGES="${DE_PACKAGES}"
-DISPLAY_MANAGER="${DISPLAY_MANAGER}"
-GPU_DRIVERS="${GPU_DRIVERS}"
-GAMES_MOUNT_POINT="${GAMES_MOUNT_POINT}"
-SWAP_SIZE="${SWAP_SIZE:-8G}"
 
 # 1. Locale
 echo "${LOCALE} UTF-8" > /etc/locale.gen
@@ -781,7 +852,7 @@ finalize_install() {
     echo "  ${YELLOW}umount -R $TARGET_MOUNT && reboot${NC}"
     echo ""
     
-    read -p "Размонтировать и подготовить к перезагрузке? [Y/n]: " unmount_confirm -n 1
+    read -n 1 -p "Размонтировать и подготовить к перезагрузке? [Y/n]: " unmount_confirm
     echo
     if [[ ! "$unmount_confirm" =~ ^[Nn]$ ]]; then
         swapoff -a
